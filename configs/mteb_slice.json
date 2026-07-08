@@ -1,0 +1,34 @@
+{
+  "tasks": [
+    "STSBenchmark",
+    "STS17",
+    "AmazonReviewsClassification",
+    "MasakhaNEWSClassification",
+    "TwentyNewsgroupsClustering",
+    "MIRACLRetrieval"
+  ],
+  "languages": [
+    "eng-Latn",
+    "zho-Hans",
+    "hin-Deva",
+    "spa-Latn",
+    "ara-Arab",
+    "fra-Latn",
+    "ben-Beng",
+    "por-Latn",
+    "rus-Cyrl",
+    "urd-Arab",
+    "ind-Latn",
+    "deu-Latn",
+    "jpn-Jpan",
+    "swa-Latn",
+    "mar-Deva",
+    "tel-Telu",
+    "tur-Latn",
+    "tam-Taml",
+    "vie-Latn",
+    "kor-Kore"
+  ],
+  "limit": 512,
+  "verbosity": 1
+}

@@ -1,0 +1,10 @@
+torch>=2.4
+transformers>=4.57.6
+sentence-transformers>=5.1
+datasets>=3.0
+accelerate>=1.0
+huggingface-hub>=0.25
+safetensors>=0.4
+mteb>=2.18
+numpy>=1.26
+tqdm>=4.66

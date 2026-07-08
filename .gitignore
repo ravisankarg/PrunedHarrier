@@ -1,0 +1,38 @@
+# Local environment
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Hugging Face / benchmark caches
+.cache/
+.hf/
+
+# Generated datasets and training outputs
+data/raw/
+data/processed/
+models/
+runs/
+eval_results/
+
+# Large model/data artifacts
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.gguf
+*.parquet
+*.arrow
+*.jsonl
+
+# Runtime logs and crash dumps
+*.log
+core
+core.*
+*.out
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,22 @@
+{
+  "retrieval": {
+    "dataset": "miracl/miracl",
+    "query_prompt": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ",
+    "doc_prompt": ""
+  },
+  "semantic_similarity": {
+    "dataset": "stsb_multi_mt",
+    "query_prompt": "Instruct: Retrieve semantically similar text\nQuery: ",
+    "doc_prompt": ""
+  },
+  "classification": {
+    "dataset": "mteb/amazon_reviews_multi",
+    "query_prompt": "Instruct: Classify the sentiment or topic of the text\nQuery: ",
+    "doc_prompt": ""
+  },
+  "clustering": {
+    "dataset": "mteb/amazon_reviews_multi",
+    "query_prompt": "Instruct: Group texts with similar topic or label\nQuery: ",
+    "doc_prompt": ""
+  }
+}
