@@ -230,6 +230,44 @@ python scripts/05_eval_mteb_slice.py \
 
 `configs/mteb_smoke.json` is intended for frequent checkpoint checks. `configs/mteb_slice.json` includes classification, clustering, retrieval, and STS tasks and may download or evaluate much more data.
 
+## Compare Phase 1 Checkpoints On CPU
+
+Use this when you want to decide which phase-1 checkpoint should feed phase 2. It evaluates selected checkpoints on CPU and writes:
+
+```text
+checkpoint_scores.csv
+checkpoint_scores_summary.json
+```
+
+Broad comparison over selected checkpoints:
+
+```bash
+python scripts/06_eval_checkpoints_cpu.py \
+  --run-dir runs/phase1_unlabeled_distill \
+  --config configs/mteb_slice.json \
+  --steps 2000,8000,10000,20000 \
+  --output-dir eval_results/phase1_checkpoint_cpu
+```
+
+Cheap STS-only smoke:
+
+```bash
+python scripts/06_eval_checkpoints_cpu.py \
+  --run-dir runs/phase1_unlabeled_distill \
+  --config configs/mteb_smoke.json \
+  --steps 2000 \
+  --output-dir eval_results/cpu_checkpoint_smoke
+```
+
+List available checkpoints without running evaluation:
+
+```bash
+python scripts/06_eval_checkpoints_cpu.py \
+  --run-dir runs/phase1_unlabeled_distill \
+  --steps 2000,8000,10000 \
+  --list-only
+```
+
 ## Validation Run
 
 The scripts have been smoke-tested in `.venv` with:
