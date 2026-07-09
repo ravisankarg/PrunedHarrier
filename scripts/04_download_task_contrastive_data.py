@@ -9,6 +9,9 @@ from tqdm import tqdm
 from common import ensure_dir, read_json, set_cache_env
 
 
+DONE_KEYS = None
+
+
 def text_value(ex, candidates):
     for key in candidates:
         val = ex.get(key)
@@ -24,8 +27,69 @@ TASK_PROMPTS = {
     "clustering": "Instruct: Group texts with similar topic or label\nQuery: ",
 }
 
+TOP20_TO_STS17 = {
+    "en": ["en-en"],
+    "zh": [],
+    "hi": [],
+    "es": ["es-es", "es-en"],
+    "ar": ["ar-ar", "en-ar"],
+    "fr": ["fr-en"],
+    "bn": [],
+    "pt": [],
+    "ru": [],
+    "ur": [],
+    "id": [],
+    "de": ["en-de"],
+    "ja": [],
+    "sw": [],
+    "mr": [],
+    "te": [],
+    "tr": ["en-tr"],
+    "ta": [],
+    "vi": [],
+    "ko": ["ko-ko"],
+}
+
+TOP20_TO_AMAZON = {
+    "en": "en",
+    "zh": "zh",
+    "es": "es",
+    "fr": "fr",
+    "de": "de",
+    "ja": "ja",
+}
+
+TOP20_TO_MASAKHA = {
+    "en": "eng",
+    "fr": "fra",
+    "sw": "swa",
+}
+
+TOP20_TO_MIRACL = {
+    "en": "en",
+    "zh": "zh",
+    "hi": "hi",
+    "es": "es",
+    "ar": "ar",
+    "fr": "fr",
+    "bn": "bn",
+    "ru": "ru",
+    "id": "id",
+    "de": "de",
+    "ja": "ja",
+    "sw": "sw",
+    "te": "te",
+    "ko": "ko",
+}
+
 
 def write_row(f, row):
+    global DONE_KEYS
+    key = (row.get("lang"), row.get("task"), row.get("query"), row.get("positive"))
+    if DONE_KEYS is not None:
+        if key in DONE_KEYS:
+            return
+        DONE_KEYS.add(key)
     f.write(json.dumps(row, ensure_ascii=False) + "\n")
     f.flush()
 
@@ -68,54 +132,75 @@ def add_universal_fallback_from_unlabeled(out_f, unlabeled_path, per_task_langua
 
 
 def try_sts(out_f, lang, spec, limit):
-    configs = [lang, f"{lang}-{lang}", "en"]
     written = 0
+    configs = TOP20_TO_STS17.get(lang, [])
+    if not configs and spec["dataset"] == "mteb/sts17-crosslingual-sts":
+        return 0
+    if not configs:
+        configs = [lang, f"{lang}-{lang}", "en"]
     for cfg in configs:
         try:
-            ds = load_dataset(spec["dataset"], cfg, split="train", streaming=True)
-            break
-        except Exception:
-            ds = None
-    if ds is None:
-        return 0
-    for ex in ds:
-        a = text_value(ex, ["sentence1", "sent1", "text1", "query"])
-        b = text_value(ex, ["sentence2", "sent2", "text2", "positive"])
-        if not a or not b:
+            split = "test" if spec["dataset"].startswith("mteb/") else "train"
+            ds = load_dataset(spec["dataset"], cfg, split=split, streaming=True)
+        except Exception as exc:
+            print(f"{lang}/semantic_similarity/{cfg}: skip {exc}", flush=True)
             continue
-        write_row(out_f, {
-            "task": "semantic_similarity",
-            "lang": lang,
-            "query": spec["query_prompt"] + a,
-            "positive": b,
-            "source": spec["dataset"],
-        })
-        written += 1
-        if written >= limit:
-            break
+        for ex in ds:
+            a = text_value(ex, ["sentence1", "sent1", "text1", "query"])
+            b = text_value(ex, ["sentence2", "sent2", "text2", "positive"])
+            if not a or not b:
+                continue
+            write_row(out_f, {
+                "task": "semantic_similarity",
+                "lang": lang,
+                "query": spec["query_prompt"] + a,
+                "positive": b,
+                "source": spec["dataset"],
+                "subset": cfg,
+            })
+            written += 1
+            if written >= limit:
+                return written
     return written
 
 
 def try_label_dataset(out_f, lang, task, spec, limit):
-    configs = [lang, f"{lang}_Latn", "en"]
+    if spec["dataset"] == "mteb/AmazonReviewsClassification":
+        cfg = TOP20_TO_AMAZON.get(lang)
+        if not cfg:
+            return 0
+        configs = [cfg]
+        splits = ["validation", "test"]
+    elif spec["dataset"] == "mteb/masakhanews":
+        cfg = TOP20_TO_MASAKHA.get(lang)
+        if not cfg:
+            return 0
+        configs = [cfg]
+        splits = ["test"]
+    else:
+        configs = [lang, f"{lang}_Latn", "en"]
+        splits = ["train"]
     written = 0
-    for cfg in configs:
-        try:
-            ds = load_dataset(spec["dataset"], cfg, split="train", streaming=True)
-            break
-        except Exception:
-            ds = None
-    if ds is None:
-        return 0
     label_buckets = {}
-    for ex in ds:
-        text = text_value(ex, ["text", "sentence", "content", "review_body", "title"])
-        label = ex.get("label") if "label" in ex else ex.get("labels")
-        if text is None or label is None:
-            continue
-        label_buckets.setdefault(str(label), []).append(text)
-        if sum(len(v) for v in label_buckets.values()) >= limit * 3:
-            break
+    for cfg in configs:
+        for split in splits:
+            try:
+                ds = load_dataset(spec["dataset"], cfg, split=split, streaming=True)
+            except Exception as exc:
+                print(f"{lang}/{task}/{cfg}/{split}: skip {exc}", flush=True)
+                continue
+            for ex in ds:
+                text = text_value(ex, ["text", "sentence", "content", "review_body", "headline", "title"])
+                label = ex.get("label") if "label" in ex else ex.get("labels")
+                if label is None:
+                    label = ex.get("category")
+                if text is None or label is None:
+                    continue
+                label_buckets.setdefault(str(label), []).append(text)
+                if sum(len(v) for v in label_buckets.values()) >= limit * 3:
+                    break
+            if sum(len(v) for v in label_buckets.values()) >= limit * 3:
+                break
     for label, texts in label_buckets.items():
         for i in range(0, len(texts) - 1, 2):
             write_row(out_f, {
@@ -133,33 +218,89 @@ def try_label_dataset(out_f, lang, task, spec, limit):
 
 
 def try_retrieval(out_f, lang, spec, limit):
-    # MIRACL dataset packaging has changed across versions; this reader is deliberately
-    # conservative and skips a language if the expected query-positive fields are absent.
     written = 0
+    if spec["dataset"] == "mteb/MIRACLRetrieval":
+        cfg = TOP20_TO_MIRACL.get(lang)
+        if not cfg:
+            return 0
+        try:
+            queries = load_dataset(spec["dataset"], f"{cfg}-queries", split="dev", streaming=True)
+            qrels = load_dataset(spec["dataset"], f"{cfg}-qrels", split="dev", streaming=True)
+            corpus = load_dataset(spec["dataset"], f"{cfg}-corpus", split="dev", streaming=True)
+        except Exception as exc:
+            print(f"{lang}/retrieval/{cfg}: skip {exc}", flush=True)
+            return 0
+
+        needed_query_ids = {}
+        needed_doc_ids = set()
+        for ex in qrels:
+            if ex.get("score", 0) <= 0:
+                continue
+            qid = str(ex.get("query-id"))
+            did = str(ex.get("corpus-id"))
+            if qid and did and qid not in needed_query_ids:
+                needed_query_ids[qid] = did
+                needed_doc_ids.add(did)
+            if len(needed_query_ids) >= limit:
+                break
+
+        query_texts = {}
+        for ex in queries:
+            qid = str(ex.get("_id"))
+            if qid in needed_query_ids:
+                query_texts[qid] = ex.get("text", "")
+            if len(query_texts) >= len(needed_query_ids):
+                break
+
+        doc_texts = {}
+        for ex in corpus:
+            did = str(ex.get("_id"))
+            if did in needed_doc_ids:
+                title = ex.get("title") or ""
+                text = ex.get("text") or ""
+                doc_texts[did] = (title + "\n" + text).strip()
+            if len(doc_texts) >= len(needed_doc_ids):
+                break
+
+        for qid, did in needed_query_ids.items():
+            query = query_texts.get(qid)
+            positive = doc_texts.get(did)
+            if not query or not positive:
+                continue
+            write_row(out_f, {
+                "task": "retrieval",
+                "lang": lang,
+                "query": spec["query_prompt"] + query,
+                "positive": positive,
+                "source": spec["dataset"],
+                "subset": cfg,
+            })
+            written += 1
+            if written >= limit:
+                return written
+        return written
+
     configs = [lang, f"{lang}/train", "en"]
     for cfg in configs:
         try:
             ds = load_dataset(spec["dataset"], cfg, split="train", streaming=True)
-            break
         except Exception:
-            ds = None
-    if ds is None:
-        return 0
-    for ex in ds:
-        query = text_value(ex, ["query", "question", "text"])
-        positive = text_value(ex, ["positive", "positive_passage", "passage", "document"])
-        if not query or not positive:
             continue
-        write_row(out_f, {
-            "task": "retrieval",
-            "lang": lang,
-            "query": spec["query_prompt"] + query,
-            "positive": positive,
-            "source": spec["dataset"],
-        })
-        written += 1
-        if written >= limit:
-            break
+        for ex in ds:
+            query = text_value(ex, ["query", "question", "text"])
+            positive = text_value(ex, ["positive", "positive_passage", "passage", "document"])
+            if not query or not positive:
+                continue
+            write_row(out_f, {
+                "task": "retrieval",
+                "lang": lang,
+                "query": spec["query_prompt"] + query,
+                "positive": positive,
+                "source": spec["dataset"],
+            })
+            written += 1
+            if written >= limit:
+                return written
     return written
 
 
@@ -179,6 +320,11 @@ def main():
         default="fallback-only",
         help="fallback-only is robust with datasets>=5; hf-then-fallback also tries configured HF sources.",
     )
+    parser.add_argument(
+        "--hf-retrieval",
+        action="store_true",
+        help="Also try real retrieval datasets. MIRACL corpus joins can be slow in streaming mode.",
+    )
     args = parser.parse_args()
 
     set_cache_env(args.cache_dir)
@@ -196,6 +342,8 @@ def main():
                 except json.JSONDecodeError:
                     continue
                 done.add((row.get("lang"), row.get("task"), row.get("query"), row.get("positive")))
+    global DONE_KEYS
+    DONE_KEYS = done
 
     with out.open(mode, encoding="utf-8") as f:
         if args.mode == "hf-then-fallback":
@@ -205,6 +353,9 @@ def main():
                     existing_count = sum(1 for item in done if item[0] == code and item[1] == task)
                     if existing_count >= args.per_task_language:
                         print(f"{code}/{task}: already has {existing_count}, skipping", flush=True)
+                        continue
+                    if task == "retrieval" and not args.hf_retrieval:
+                        print(f"{code}/{task}: skipping HF retrieval; fallback will fill this bucket", flush=True)
                         continue
                     print(f"{code}/{task}: downloading up to {args.per_task_language}", flush=True)
                     if task == "semantic_similarity":

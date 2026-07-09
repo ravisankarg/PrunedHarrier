@@ -153,10 +153,11 @@ Resume behavior: `--resume` loads `runs/phase1_unlabeled_distill/checkpoint-late
 
 ## Step 4: Download Task-Aware Contrastive Data
 
-With `datasets>=5`, several older HF dataset scripts are no longer supported. The default mode therefore builds robust prompted contrastive examples from the unlabeled corpus.
+This step first tries compatible MTEB mirror datasets for real task data, then fills missing language/task buckets from the unlabeled corpus. Retrieval uses fallback by default because joining MIRACL qrels to the streamed corpus is slow; pass `--hf-retrieval` only if you explicitly want to try that expensive path.
 
 ```bash
 python scripts/04_download_task_contrastive_data.py \
+  --mode hf-then-fallback \
   --languages configs/top20_languages.json \
   --sources configs/task_data_sources.json \
   --per-task-language 5000 \
@@ -166,11 +167,11 @@ python scripts/04_download_task_contrastive_data.py \
 
 Resume behavior: rerun the same command. It skips language/task buckets that already have the requested count. Use `--force` to rebuild the file.
 
-To also try configured HF datasets before fallback:
+To use only local prompted fallback data:
 
 ```bash
 python scripts/04_download_task_contrastive_data.py \
-  --mode hf-then-fallback \
+  --mode fallback-only \
   --languages configs/top20_languages.json \
   --sources configs/task_data_sources.json \
   --per-task-language 5000 \
