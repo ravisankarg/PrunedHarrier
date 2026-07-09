@@ -28,8 +28,8 @@ The workflow is designed for a small local GPU. The default plan keeps the train
 Phase 1 uses unlabeled text distillation:
 
 ```text
-final embedding cosine loss
-+ final embedding similarity-matrix MSE
+similarity_weight * final embedding similarity-matrix MSE
++ cosine_weight * final embedding cosine loss
 + layerwise_weight * hidden-state layerwise MSE
 ```
 
@@ -104,6 +104,36 @@ Resume behavior: rerun the same command after a power or network interruption. I
 
 ## Step 3: Phase 1 Distillation
 
+The first debug run showed that `1024 -> 384` width slicing produces a very weak raw STS embedding space, and that heavy projected/layerwise loss did not repair it. Prefer a raw-embedding similarity-first run before using projected cosine or layerwise losses heavily.
+
+Recommended restart for phase 1:
+
+```bash
+python scripts/03_train_distill.py \
+  --student models/harrier_student_12l_384_sliced \
+  --teacher models/teacher_harrier_0_6b \
+  --train-jsonl data/processed/unlabeled_top20_25k.jsonl \
+  --output-dir runs/phase1_similarity_only \
+  --max-length 512 \
+  --batch-size 8 \
+  --grad-accum 4 \
+  --lr 2e-5 \
+  --max-steps 5000 \
+  --similarity-weight 1.0 \
+  --cosine-weight 0.0 \
+  --layerwise-weight 0.0 \
+  --student-device cuda \
+  --student-dtype bf16 \
+  --teacher-device cuda \
+  --teacher-dtype bf16 \
+  --eval-every 500 \
+  --save-every 500 \
+  --mteb-slice-config configs/mteb_smoke.json \
+  --resume
+```
+
+If STS starts moving in the right direction, extend it. If not, move directly to task-aware contrastive training.
+
 This command uses the latest requested large microbatch settings:
 
 ```text
@@ -125,6 +155,8 @@ python scripts/03_train_distill.py \
   --grad-accum 4 \
   --lr 2e-5 \
   --max-steps 20000 \
+  --similarity-weight 1.0 \
+  --cosine-weight 0.25 \
   --layerwise-weight 0.25 \
   --layer-map-config configs/student_12l_384.json \
   --student-device cuda \

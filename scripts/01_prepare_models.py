@@ -1,4 +1,5 @@
 import argparse
+import json
 import shutil
 from pathlib import Path
 
@@ -100,6 +101,14 @@ def main():
     pooling_src = Path(teacher_snapshot) / "1_Pooling"
     if pooling_src.exists():
         shutil.copytree(pooling_src, out_dir / "1_Pooling", dirs_exist_ok=True)
+        pooling_config = out_dir / "1_Pooling" / "config.json"
+        if pooling_config.exists():
+            with pooling_config.open("r", encoding="utf-8") as f:
+                pooling = json.load(f)
+            pooling["word_embedding_dimension"] = student_config.hidden_size
+            with pooling_config.open("w", encoding="utf-8") as f:
+                json.dump(pooling, f, ensure_ascii=False, indent=2)
+                f.write("\n")
     ensure_dir(out_dir / "2_Normalize")
 
     write_json(

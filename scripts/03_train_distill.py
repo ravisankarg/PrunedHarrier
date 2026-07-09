@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -45,18 +46,22 @@ def batch_texts(rows):
     return [r["text"] for r in rows], False
 
 
-def distill_loss(student_emb, teacher_emb, projected_student_emb=None):
-    s_sim = student_emb @ student_emb.T
-    t_sim = teacher_emb @ teacher_emb.T
-    sim = F.mse_loss(s_sim, t_sim)
+def distill_loss(student_emb, teacher_emb, projected_student_emb=None, similarity_weight=1.0, cosine_weight=1.0):
+    loss = student_emb.new_tensor(0.0)
+    if similarity_weight > 0:
+        s_sim = student_emb @ student_emb.T
+        t_sim = teacher_emb @ teacher_emb.T
+        loss = loss + similarity_weight * F.mse_loss(s_sim, t_sim)
+    if cosine_weight <= 0:
+        return loss
     if student_emb.shape[-1] == teacher_emb.shape[-1]:
         cosine = 1.0 - F.cosine_similarity(student_emb, teacher_emb, dim=-1).mean()
-        return cosine + sim
+        return loss + cosine_weight * cosine
     if projected_student_emb is not None:
         projected_student_emb = F.normalize(projected_student_emb, p=2, dim=-1)
         cosine = 1.0 - F.cosine_similarity(projected_student_emb, teacher_emb, dim=-1).mean()
-        return cosine + sim
-    return sim
+        return loss + cosine_weight * cosine
+    return loss
 
 
 def contrastive_loss(student_emb, pair_batch_size, temperature=0.05):
@@ -97,6 +102,27 @@ def save_checkpoint(student, tokenizer, output_dir, step, manifest):
     ensure_dir(ckpt)
     student.save_pretrained(ckpt, safe_serialization=True)
     tokenizer.save_pretrained(ckpt)
+    source_export = Path(manifest["student"])
+    for name in ["modules.json", "config_sentence_transformers.json"]:
+        src = source_export / name
+        if src.exists():
+            shutil.copy2(src, ckpt / name)
+    pooling_src = source_export / "1_Pooling"
+    if pooling_src.exists():
+        shutil.copytree(pooling_src, ckpt / "1_Pooling", dirs_exist_ok=True)
+        pooling_config = ckpt / "1_Pooling" / "config.json"
+        if pooling_config.exists():
+            with pooling_config.open("r", encoding="utf-8") as f:
+                pooling = json.load(f)
+            pooling["word_embedding_dimension"] = student.config.hidden_size
+            with pooling_config.open("w", encoding="utf-8") as f:
+                json.dump(pooling, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+    normalize_src = source_export / "2_Normalize"
+    if normalize_src.exists():
+        shutil.copytree(normalize_src, ckpt / "2_Normalize", dirs_exist_ok=True)
+    else:
+        ensure_dir(ckpt / "2_Normalize")
     write_json(ckpt / "train_manifest.json", manifest)
     return ckpt
 
@@ -160,6 +186,8 @@ def main():
     parser.add_argument("--save-every", type=int, default=1000)
     parser.add_argument("--eval-every", type=int, default=1000)
     parser.add_argument("--teacher-weight", type=float, default=1.0)
+    parser.add_argument("--similarity-weight", type=float, default=1.0)
+    parser.add_argument("--cosine-weight", type=float, default=1.0)
     parser.add_argument("--contrastive-weight", type=float, default=0.0)
     parser.add_argument("--layerwise-weight", type=float, default=0.0)
     parser.add_argument("--layer-map-config", default="configs/student_12l_384.json")
@@ -178,6 +206,14 @@ def main():
     set_cache_env(args.cache_dir)
     if args.student_device == "cuda" and not torch.cuda.is_available():
         args.student_device = "cpu"
+    if (
+        args.batch_size < 2
+        and args.similarity_weight > 0
+        and args.cosine_weight <= 0
+        and args.layerwise_weight <= 0
+        and args.contrastive_weight <= 0
+    ):
+        raise ValueError("Similarity-only training needs --batch-size >= 2 because pairwise similarity loss is zero for a single-item microbatch.")
 
     ensure_dir(args.output_dir)
     torch.manual_seed(args.seed)
@@ -209,7 +245,7 @@ def main():
         p.requires_grad_(False)
 
     projection = None
-    if student.config.hidden_size != teacher.config.hidden_size:
+    if args.cosine_weight > 0 and student.config.hidden_size != teacher.config.hidden_size:
         projection = nn.Linear(student.config.hidden_size, teacher.config.hidden_size, bias=False).to(args.student_device)
         print(f"Using train-time projection head {student.config.hidden_size}->{teacher.config.hidden_size}")
 
@@ -283,7 +319,13 @@ def main():
                     student_hidden = None
                 projected = projection(student_emb) if projection is not None else None
                 projected = projected.float() if projected is not None else None
-                loss = args.teacher_weight * distill_loss(student_emb.float(), teacher_emb.float(), projected)
+                loss = args.teacher_weight * distill_loss(
+                    student_emb.float(),
+                    teacher_emb.float(),
+                    projected,
+                    similarity_weight=args.similarity_weight,
+                    cosine_weight=args.cosine_weight,
+                )
                 if args.layerwise_weight > 0:
                     loss = loss + args.layerwise_weight * layerwise_mse_loss(
                         student_hidden,
