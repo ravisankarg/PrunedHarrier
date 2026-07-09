@@ -113,7 +113,9 @@ def add_universal_fallback_from_unlabeled(out_f, unlabeled_path, per_task_langua
             if existing_count >= per_task_language:
                 print(f"{lang}/{task}: already has {existing_count}, skipping fallback", flush=True)
                 continue
-            for idx, text in enumerate(texts[:per_task_language]):
+            needed = per_task_language - existing_count
+            written = 0
+            for idx, text in enumerate(texts):
                 positive = text
                 if task in {"classification", "clustering"} and len(texts) > 1:
                     positive = texts[(idx + 1) % len(texts)]
@@ -129,6 +131,44 @@ def add_universal_fallback_from_unlabeled(out_f, unlabeled_path, per_task_langua
                     continue
                 write_row(out_f, row)
                 done.add(key)
+                written += 1
+                if written >= needed:
+                    break
+            print(f"{lang}/{task}: fallback wrote {written}", flush=True)
+
+
+def print_output_summary(path):
+    by_source = {}
+    by_task = {}
+    by_bucket = {}
+    bad = 0
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                bad += 1
+                continue
+            source = row.get("source", "")
+            task = row.get("task", "")
+            lang = row.get("lang", "")
+            by_source[source] = by_source.get(source, 0) + 1
+            by_task[task] = by_task.get(task, 0) + 1
+            by_bucket[(lang, task)] = by_bucket.get((lang, task), 0) + 1
+
+    print("Final output summary", flush=True)
+    print(f"  rows: {sum(by_source.values())}", flush=True)
+    print(f"  bad_json_rows: {bad}", flush=True)
+    print(f"  buckets: {len(by_bucket)}", flush=True)
+    if by_bucket:
+        print(f"  bucket_min: {min(by_bucket.values())}", flush=True)
+        print(f"  bucket_max: {max(by_bucket.values())}", flush=True)
+    print("  by_source:", flush=True)
+    for source, count in sorted(by_source.items(), key=lambda item: (-item[1], item[0])):
+        print(f"    {source}: {count}", flush=True)
+    print("  by_task:", flush=True)
+    for task, count in sorted(by_task.items()):
+        print(f"    {task}: {count}", flush=True)
 
 
 def try_sts(out_f, lang, spec, limit):
@@ -369,6 +409,7 @@ def main():
                     print(f"{code}/{task}: wrote {n}", flush=True)
         print("Adding prompted fallback examples from unlabeled text", flush=True)
         add_universal_fallback_from_unlabeled(f, args.unlabeled_fallback, args.per_task_language, langs, args.seed, done)
+    print_output_summary(out)
 
 
 if __name__ == "__main__":
